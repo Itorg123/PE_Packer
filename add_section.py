@@ -26,6 +26,7 @@ def encrypt_pe(orig_pe_path):
     for k in key[::-1]:
         encrypted_data = bytes([b^ord(k) for b in encrypted_data])
 
+    # TODO: section alingment is not const - check it before
     # padding to alingment 0x200 = 512 bytes
 
     padding_size = 512 - size%512
@@ -78,3 +79,5 @@ def add_section(pe_path, orig_pe_path):
     # save the packer
     lief.PE.Binary.write("PACKER_00.exe")
     
+    
+add_section("C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\PACKER.exe", "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\check_exe.exe")
