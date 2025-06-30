@@ -202,6 +202,7 @@ int main()
     // secion header
     section_header = IMAGE_FIRST_SECTION(nt_header);
 
+    // copy sections to memory (image)
 
     for (int i = 0; i < section_number; i++)
     {
@@ -276,6 +277,7 @@ int main()
 
     if (iat.Size != 0)
     {
+        // initialize variables
         PIMAGE_IMPORT_DESCRIPTOR import_desc;
         import_desc = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE*)virtual_memory + iat.VirtualAddress);
         DWORD ilt_rva = import_desc->OriginalFirstThunk;
@@ -301,26 +303,29 @@ int main()
             while (orig_thunk->u1.AddressOfData)
             {
 
-
+                // find dunction by name or ordinal (like id of the function in the dll)
                 FARPROC func_address;
 
-                if (!(orig_thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG))
+                if (!(orig_thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)) // by name
                 {
                     PIMAGE_IMPORT_BY_NAME import_by_name = (PIMAGE_IMPORT_BY_NAME)((BYTE*)virtual_memory + orig_thunk->u1.AddressOfData);
                     char* func_name = (char*)import_by_name->Name;
 
+                    // get function address
                     func_address = GetProcAddress(dll_handle, func_name);
 
+                    // not working
                     if (func_address == NULL)
                     {
                         printf("GetModuleAddress failed");
                     }
                 }
-                else
+                else // not by name - by ordinal
                 {
+                    // get function addres
+                    func_address = GetProcAddress(dll_handle, (LPCSTR)(orig_thunk->u1.Ordinal & 0xffff));  // ordinal value in lower 16 bit of ordinal
 
-                    func_address = GetProcAddress(dll_handle, (LPCSTR)(orig_thunk->u1.Ordinal & 0xffff));
-
+                    // not working
                     if (func_address == NULL)
                     {
                         printf("GetModuleAddress failed");
@@ -328,12 +333,15 @@ int main()
 
                 }
 
+                // write the address in table
                 first_thunk->u1.Function = (ULONGLONG)func_address;
 
+                // forward function
                 orig_thunk++;
                 first_thunk++;
 
             }
+            // forward dll
             import_desc++;
         }
 
@@ -347,13 +355,17 @@ int main()
     run_entery_point to_run = (run_entery_point)((BYTE*)virtual_memory + entery_point_rva);
     */
 
+    // address of start of code
     BYTE* to_run = (BYTE*)virtual_memory + entery_point_rva;
 
+    // delete all the cache - i dont want that it will run from what he remember, i want to run from what that write in memory
     FlushInstructionCache(GetCurrentProcess(), virtual_memory, size_of_image);
 
+    // open thread for the code
     DWORD THREAD_ID;
     HANDLE thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)to_run, NULL, 0, &THREAD_ID);
 
+    // dont close the procces while the thread run
     WaitForSingleObject(thread, INFINITE);
 
 
