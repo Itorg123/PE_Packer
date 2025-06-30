@@ -26,11 +26,10 @@ def encrypt_pe(orig_pe_path):
     for k in key[::-1]:
         encrypted_data = bytes([b^ord(k) for b in encrypted_data])
 
-    # TODO: section alingment is not const - check it before
-    # padding to alingment 0x200 = 512 bytes
+    # padding to alingment 0x1000 = 4096 bytes
 
-    padding_size = 512 - size%512
-    if (padding_size == 512):
+    padding_size = 4096 - size%4096
+    if (padding_size == 4096):
         padding_size = 0
     encrypted_data += b'\x00' * padding_size
 
@@ -54,7 +53,6 @@ def add_section(pe_path, orig_pe_path):
 
     # create section to add
     section = lief.PE.Section(".encrypt")
-
 
     # encrypt the file
     encrypted_pe = encrypt_pe(orig_pe_path)
