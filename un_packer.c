@@ -74,6 +74,70 @@ void decrypt(unsigned char *encrypted_data, int size)
 
 }
 
+/*
+void trampoline()
+{
+
+    // need to change the orig function proluge = 3 bytes     to      (pop eax; nop; nop) = 3 bytes
+    DWORD loaded_exe_delta;
+    DWORD loaded_function_address;
+    DWORD loader_function_address;
+    DWORD loaded_function_address_rva_from_here = (loaded_function_address + loaded_exe_delta) - loader_function_address;
+    __asm 
+    {
+        
+        
+        // move the relative_address to eax
+        mov eax, [new_address_rva]
+
+        // jump to the relative_address on eax
+        jmp eax
+    }
+}
+*/
+
+void anti_debug() 
+{
+    while (1) 
+    {
+        // is_debuger_present - this is check the PEB - procces enviorment block
+        if (IsDebuggerPresent()) 
+        {
+            printf("debuger is present!!!!!!!!!");
+            ExitProcess(-1);
+        }
+
+        // check the procces enviorment block
+        BOOL is_debugged;
+        if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &is_debugged) && is_debugged) 
+        {
+            printf("debuger is present!!!!!!!!!");
+            ExitProcess(-1);
+        }
+
+        // when procces run on debuger - the debuger catch the exception - if it wasnt catch - probably dont have debuger
+        is_debugged = true;
+        __try
+        {
+            RaiseException(DBG_PRINTEXCEPTION_C, 0, 0, 0);
+            // is_debugged stay true beacuse the exception catched and the try continue because he doesnt see exception 
+        }
+        __except (GetExceptionCode() == DBG_PRINTEXCEPTION_C)
+        {
+            // exception wasnt catched -> the __except catched it - so there is no debuger
+            is_debugged = false;
+        }
+
+        // exit
+        if (is_debugged) 
+        {            
+            printf("debuger is present!!!!!!!!!");
+            ExitProcess(-1);
+        }
+
+        // it possible to check times, or check for CC (BreakPoint)in the memory but for now it enough
+    }
+}
 
 
 int main()
@@ -83,6 +147,9 @@ int main()
     // open file
 
     // open thread of find debuger - run all time
+
+    DWORD thread_id;
+    HANDLE anti_debug_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)anti_debug, NULL, 0, &thread_id);
 
     FILE* exe;
     
@@ -187,8 +254,6 @@ int main()
     
     // image base
     DWORD image_base = optional_header.ImageBase;
-
-    printf("virtual memory: %x", virtual_memory);
 
     // printf("image base: %llx, actual address: %llx, delta: %llx", image_base, virtual_memory, delta);
 
@@ -363,10 +428,20 @@ int main()
 
     // open thread for the code
     DWORD THREAD_ID;
-    HANDLE thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)to_run, NULL, 0, &THREAD_ID);
+    HANDLE image_run_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)to_run, NULL, 0, &THREAD_ID);
 
-    // dont close the procces while the thread run
-    WaitForSingleObject(thread, INFINITE);
+    // sont close the procces while the thread run
+    WaitForSingleObject(image_run_thread, INFINITE);
+
+    // free
+
+    free(buffer);
+    free(enc);
+    VirtualFree(virtual_memory, 0, MEM_RELEASE);
+
+    // close threads handles
+    CloseHandle(image_run_thread);
+    CloseHandle(anti_debug_thread);
 
 
 }
