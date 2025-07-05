@@ -1,3 +1,66 @@
+
+
+call_template = '''
+.proc trampoline_func
+call _next_op
+_next_op:
+    pop ebx ; EBX has the current address
+    ...
+pop ebx ; get return address (foo)
+sub ebx, 0xdeadbeef ; Substract the load address here
+; Switch-case here:
+cmp ebx, 0x124B
+je jump_to_84542D
+
+jump_to_84542D:
+    mov 
+
+; ... EAX contains bar's address
+; (SAVE EBX HERE)
+call _jump_target
+; Returning here:
+; (RESTORE EBX HERE)
+jmp ebx
+
+_jump_target:
+jmp eax
+...
+foo:
+push 2
+push 1
+call trampoline_func
+
+bar:
+push ebp
+mov ebp, esp
+
+'''
+
+
+"""
+
+LOADER
+
+    main_trampoline - rva 100 from the loader image_base
+    
+    
+    loaded exe,     loaded_image_base = loader_image_base + delta
+    
+        call foo - (caller - foo) need to be the 
+
+
+
+    
+    
+    scan with capstone 
+
+
+
+"""
+
+
+
+
 """
 
 EXE from client
@@ -58,13 +121,15 @@ address_4
 
 from keystone import Ks, KS_ARCH_X86, KS_MODE_32
 from capstone import *
+import lief
 import pefile
 import struct
+import os
 
 # exe path
 #path = "c:\\Users\\Itay H\\Desktop\\cyber\\packer_project_learn\\PACKER_00.exe"
 #path = "C:\\Users\\Itay H\\Downloads\\GuessPass.exe"
-path = "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\check_exe.exe"
+
 def create_patch_dict(exe_path):
     # init pe file
     pe = pefile.PE(exe_path)
@@ -161,7 +226,7 @@ def create_patch_dict(exe_path):
 """
     
 
-def create_assembly_code(calls_number, address_to_jump_from_trampoline_lst):
+def create_assembly_code(calls_number):
     entery = """
     mov eax, {}
     jmp _end_of_calls_number"""
@@ -197,31 +262,35 @@ def create_assembly_code(calls_number, address_to_jump_from_trampoline_lst):
     tramp_main = """    
     _end_of_calls_number:
         mov edx, eax
-        call label_for_get_address
-        label_for_get_address:
-        pop eax
         mov eax, [table + edx*4]
         jmp eax
+    .align 4
     table:
     """
     
     # add the main:
     tramp_code += tramp_main 
-    
-    # add the table of addresses
-    bytes_to_write = b""
-    for i in address_to_jump_from_trampoline_lst:
-        bytes_to_write += struct.pack("<I", i)
 
-    return tramp_code, bytes_to_write
+    return tramp_code
 
 
 def assembler(assembly_code):
     ks = Ks(KS_ARCH_X86, KS_MODE_32)
     
-    encode, count = ks.asm(assembly_code)
+    encode, count = ks.asm(assembly_code, as_bytes = True)
     
-    return encode, count
+    # add the first 4 bytes as meta data - size of opcode bytes
+    size_of_code = len(encode)
+    
+    # pack to bytes
+    size_as_bytes = struct.pack("<I", size_of_code)
+    
+    # add to start
+    encode = size_as_bytes + encode
+    
+    print(size_of_code)
+    
+    return encode    
 
 
 
@@ -256,9 +325,9 @@ def address_to_call_from_table_correct(orig_call_inst_rva: list, inst_rva_lst: l
         # absolute adddress = orig_call_rva + inst_rva (even for + and - value of orig_call_rva ) + 5 (5 byte of instruction)
         absolute_address = orig_call_rva + inst_rva_lst[i].address + 5
         # add to list                
-        tramp_jmp_absolute_addresses_lst.append(absolute_address)
+        tramp_jmp_absolute_addresses_lst.append(struct.pack("<I", absolute_address))
 
-    return tramp_jmp_absolute_addresses_lst
+    return b"".join(tramp_jmp_absolute_addresses_lst)
 
 def address_to_call_from_table_not_correct(orig_call_inst_rva: list, to_trampoline_rva: dict):
     
@@ -325,13 +394,136 @@ def address_to_call_from_table_not_correct(orig_call_inst_rva: list, to_trampoli
         print(orig_call_rva, to_trampoline_call_rva)
     
 
+def add_section_2(pe_path, section_data, section_name):
+    """Get PE path - return path to new pe with new section"""
 
-calls_number, change_places, inst_lst, inst_rva_lst = create_patch_dict(path)
+    # loader + unpacker
+    lief.PE.Binary = lief.PE.parse(pe_path)
+
+    # create section to add
+    section = lief.PE.Section(section_name)
+
+    # write data to section
+    section.content = list(section_data)
+
+    # init characteristics for premissions - read    
+    section.characteristics =  lief.PE.SECTION_CHARACTERISTICS.MEM_READ \
+                             | lief.PE.SECTION_CHARACTERISTICS.CNT_INITIALIZED_DATA
+
+    # add section to loader-packer
+    lief.PE.Binary.add_section(section)
 
 
-tramp_jmp_absolute_addresses_lst = address_to_call_from_table_correct(inst_lst, inst_rva_lst)
+    # save the packer
+    lief.PE.Binary.write("PACKER_TRAMP.exe")
 
-tramp_code, bytes_to_write = create_assembly_code(calls_number, tramp_jmp_absolute_addresses_lst)
-print(tramp_code)
-print(assembler(tramp_code))
+
+def encrypt_pe(orig_pe_path):
+
+    # find pe size
+    size = os.path.getsize(orig_pe_path)
+
+    # encrypt
+
+    with open(orig_pe_path, 'rb') as orig_file:
+        data = orig_file.read()
+
+    encrypted_data = bytes(data)
+    key = 'Itay_h'
+    for k in key[::-1]:
+        encrypted_data = bytes([b^ord(k) for b in encrypted_data])
+
+    # padding to alingment 0x1000 = 4096 bytes
+
+    padding_size = 4096 - size%4096
+    if (padding_size == 4096):
+        padding_size = 0
+    encrypted_data += b'\x00' * padding_size
+
+
+    # save in file "encrypted_pe.bin"
+
+    with open('encrypted_pe.bin', 'wb') as f:
+        f.write(encrypted_data)
+
+
+    # return path to the file even if it const
+
+    return 'encrypted_pe.bin'
+
+
+def add_section(pe_path, orig_pe_path):
+    """Get PE path - return path to new pe with new section"""
+
+    # loader + unpacker
+    lief.PE.Binary = lief.PE.parse(pe_path)
+
+    # create section to add
+    section = lief.PE.Section(".encrypt")
+
+    # encrypt the file
+    encrypted_pe = encrypt_pe(orig_pe_path)
+
+
+    # read encrypt data
+    with open(encrypted_pe, 'rb') as enc_pe:
+        enc = enc_pe.read()
+
+
+    # write data to section
+    section.content = list(enc)
+
+    # init characteristics for premissions - read    
+    section.characteristics =  lief.PE.SECTION_CHARACTERISTICS.MEM_READ \
+                             | lief.PE.SECTION_CHARACTERISTICS.CNT_INITIALIZED_DATA
+
+    # add section to loader-packer
+    lief.PE.Binary.add_section(section)
+
+
+    # save the packer
+    lief.PE.Binary.write("PACKER_TRAMP.exe")
+
+
+def main():
+    loader_path = "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\PACKER_TRAMP.exe"
+    exe_from_client_path = "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\check_exe_2.exe"
+    loader_path_2 = "C:\\Users\\Itay H\\Desktop\\cyber\\packer_project_learn\\PACKER_TRAMP.exe"
+
+    calls_number, change_places, inst_lst, inst_rva_lst = create_patch_dict(exe_from_client_path)
+    
+    # change e8 calls
+    patch_file(change_places, exe_from_client_path)
+    
+    # add section - encrypted pe file
+    add_section(loader_path, exe_from_client_path)
+    
+    # create the assembly and make from this bytes
+    assembly_code = create_assembly_code(calls_number)
+    assembly_bytes = assembler(assembly_code)
+    
+    # jump table: absolute addresses of functions
+    address_to_jump_from_trampoline_bytes = address_to_call_from_table_correct(inst_lst, inst_rva_lst)
+
+    print(address_to_jump_from_trampoline_bytes)
+
+    # add the assembly bytes
+    add_section_2(loader_path_2, assembly_bytes, '.trampol')
+    
+    # add the table
+    add_section_2(loader_path_2, address_to_jump_from_trampoline_bytes, '.address')
+    
+
+
+# path = "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\check_exe.exe"
+# calls_number, change_places, inst_lst, inst_rva_lst = create_patch_dict(path)
+
+
+# tramp_jmp_absolute_addresses_lst = address_to_call_from_table_correct(inst_lst, inst_rva_lst)
+# print(bytes(tramp_jmp_absolute_addresses_lst))
+
+main()
+
+# tramp_code, bytes_to_write = create_assembly_code(calls_number, tramp_jmp_absolute_addresses_lst)
+# print(tramp_code)
 
