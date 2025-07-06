@@ -349,7 +349,7 @@ int main()
     for (int i = 0; i < (table_size / sizeof(DWORD)-1); i++)
     {
         printf("         in index i: %x      ", addresses_table[i]);
-        addresses_table[i] += delta;
+        addresses_table[i] += (DWORD)virtual_memory;
     }
 
     // the copy:

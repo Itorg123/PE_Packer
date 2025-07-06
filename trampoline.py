@@ -1,5 +1,4 @@
 
-
 call_template = '''
 .proc trampoline_func
 call _next_op
@@ -256,16 +255,18 @@ def create_assembly_code(calls_number):
         jmp eax
         
         table:
-    
+        .align 4
+
     """
     
     tramp_main = """    
     _end_of_calls_number:
+        call _find_eip_lable 
+    _find_eip_lable:
+        pop ecx
         mov edx, eax
-        mov eax, [table + edx*4]
+        mov eax, [ecx + edx*4 + 9]
         jmp eax
-    .align 4
-    table:
     """
     
     # add the main:
@@ -526,4 +527,5 @@ main()
 
 # tramp_code, bytes_to_write = create_assembly_code(calls_number, tramp_jmp_absolute_addresses_lst)
 # print(tramp_code)
+
 
