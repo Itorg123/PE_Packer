@@ -1,123 +1,4 @@
 
-call_template = '''
-.proc trampoline_func
-call _next_op
-_next_op:
-    pop ebx ; EBX has the current address
-    ...
-pop ebx ; get return address (foo)
-sub ebx, 0xdeadbeef ; Substract the load address here
-; Switch-case here:
-cmp ebx, 0x124B
-je jump_to_84542D
-
-jump_to_84542D:
-    mov 
-
-; ... EAX contains bar's address
-; (SAVE EBX HERE)
-call _jump_target
-; Returning here:
-; (RESTORE EBX HERE)
-jmp ebx
-
-_jump_target:
-jmp eax
-...
-foo:
-push 2
-push 1
-call trampoline_func
-
-bar:
-push ebp
-mov ebp, esp
-
-'''
-
-
-"""
-
-LOADER
-
-    main_trampoline - rva 100 from the loader image_base
-    
-    
-    loaded exe,     loaded_image_base = loader_image_base + delta
-    
-        call foo - (caller - foo) need to be the 
-
-
-
-    
-    
-    scan with capstone 
-
-
-
-"""
-
-
-
-
-"""
-
-EXE from client
-.
-.call ___
-.
-_______________
-meta data
-like enterys
-size
-_______________
-trampoline code: 
-
-mov eax, 0
-jmp end_of_calls_number
-
-mov eax, 1
-jmp end_of_calls_number
-
-mov eax, 2
-jmp end_of_calls_number
-
-mov eax, 3
-jmp end_of_calls_number
-
-mov eax, 4
-jmp end_of_calls_number
-
-_end_of_calls_number:
-
-    mov edx, eax
-    
-    call label_for_get_address
-    label_for_get_address:
-    pop eax           58
-    
-    mov eax, [eax + <bytes_number_from_here_to_table_base> + edx*4]     8b 44 90 04
-    
-    // it possible to do stronger encrypt, not now
-    xor eax, edx      31 d0
-    
-    jmp eax           ff e0
-
-_______________
-address_0
-_______________
-address_1
-_______________
-address_2
-_______________
-address_3
-_______________
-address_4
-.
-.
-.
-"""
-
 from keystone import Ks, KS_ARCH_X86, KS_MODE_32
 from capstone import *
 import lief
@@ -151,14 +32,18 @@ def create_patch_dict(exe_path):
             
 
     """
-    0:  b8 01 00 00 00          mov    eax,0x1
-    5:  e9 eb be ad de          jmp    deadbef6 <_main+0xdeadbef6>
+    0:  50                      push   eax
+    1:  51                      push   ecx
+    2:  52                      push   edx
+    3:  b8 01 00 00 00          mov    eax,0x1
+    8:  e9 fc ff ff ff          jmp    9 <_main+0x9>
 
-    between each entery there are 10 bytes
+
+    between each entery there are 13 bytes
 
     """
     # size of entery
-    size_of_entery = 10
+    size_of_entery = 13
 
     # number of calls rel32
     calls_number = 0
@@ -184,6 +69,7 @@ def create_patch_dict(exe_path):
     # the rva of the instructions, i will uses this for calculate the absolute addresses in table
     inst_rva_lst = []
     
+    # i think that zip is the best option to move on 2 vars
     for inst_rva, isnt_offset in zip(opcodes_rva, opcodes_offset): # run with offset and rva
         # find call
         if inst_rva.mnemonic == "call":  
@@ -201,12 +87,16 @@ def create_patch_dict(exe_path):
                 
                 offset_to_patch = isnt_offset.address + 1  # i need to change the 4 bytes after 0xE8
                 
+                # eip point on the next instruction
                 next_instruction_rva = inst_rva.address + inst_rva.size 
                 
+                # offset of entery for specific call
                 offset_from_trampoline_base = size_of_entery * calls_number
 
+                # e8 _ _ _ _, this is what that will replace the _ _ _ _ (rel32 address)
                 new_call_address_rva = (trampoline_start_rva + offset_from_trampoline_base) - next_instruction_rva            
                 
+                # save in the dict where need change to what
                 change_places[offset_to_patch] = new_call_address_rva 
 
                 calls_number += 1
@@ -227,6 +117,9 @@ def create_patch_dict(exe_path):
 
 def create_assembly_code(calls_number):
     entery = """
+    push eax
+    push ecx
+    push edx
     mov eax, {}
     jmp _end_of_calls_number"""
 
@@ -236,41 +129,31 @@ def create_assembly_code(calls_number):
         tramp_code += entery.format(i)
 
     # add the "MAIN" of the trampoline
-    
-    """    
-    _end_of_calls_number:
-    
-        ; save entery number in EDX
-        mov edx, eax
-        
-        ; trick for get EIP to EAX
-        call label_for_get_address
-        label_for_get_address:
-        pop eax
-        
-        ; read from table the absolute address 
-        mov eax, [table + edx*4]
-        
-        ; jmp to the function
-        jmp eax
-        
-        table:
-        .align 4
 
-    """
-    
-    tramp_main = """    
+    # very clever trampoline - taked long time but now im happy
+    # the entery pushed the registers eax, ecx, edx
+    # then move to eax the entery number and jump to _end_of_calls_number
+    # here i calculate the absolute address of the function
+    # pop what i saved
+    # replace between eax (address to jump), to eax(what i saved)
+    # 'jump' by ret 
+    tramp_main = """
     _end_of_calls_number:
         call _find_eip_lable 
     _find_eip_lable:
         pop ecx
         mov edx, eax
-        mov eax, [ecx + edx*4 + 9]
-        jmp eax
+        mov eax, [ecx + edx*4 + 13]
+        pop edx
+        pop ecx
+        xchg eax, [esp]
+        ret
     """
     
     # add the main:
     tramp_code += tramp_main 
+    
+    print(tramp_code)
 
     return tramp_code
 
@@ -328,71 +211,9 @@ def address_to_call_from_table_correct(orig_call_inst_rva: list, inst_rva_lst: l
         # add to list                
         tramp_jmp_absolute_addresses_lst.append(struct.pack("<I", absolute_address))
 
+    # return the addresses as one bytes 'str'
     return b"".join(tramp_jmp_absolute_addresses_lst)
 
-def address_to_call_from_table_not_correct(orig_call_inst_rva: list, to_trampoline_rva: dict):
-    
-    """
-    
-    func    // 1
-    
-    call <trampoline> (it was call to func before)    // 2
-    
-    func    // 3
-    
-    _trampoline:
-        need to call <4->1>  or <4->3>       // 4
-        4->1 = -1*(|1->2| + |2->4|)
-        or
-        4->3 = -1(|4->2| - |3->2|)
-    """
-    
-    to_trampoline_rva_lst = list(to_trampoline_rva.values())
-    
-    call_numbers = len(orig_call_inst_rva)
-    
-    entery_size = 10 
-    
-    
-    # TODO: find the size in bytes of opcodes after the enterys
-    size_of_opcode_after_enterys = 0
-    
-    
-    # list: per index - the call rva (rel32)
-    tramp_call_rva_lst = []
-
-    # loop per any call
-    for i in range(call_numbers):
-        
-        # any index start in other entery
-        enterys_size = entery_size * (call_numbers - i)
-
-        # sum of trampoline size = enterys + after_them
-        all_trampoline_size = enterys_size + size_of_opcode_after_enterys
-
-        print("to_trampoline_rva_lst[i]: ", to_trampoline_rva_lst[i])
-        
-        # unpack
-        orig_call_rva = struct.unpack("<i", orig_call_inst_rva[i])[0]
-        
-        to_trampoline_call_rva = to_trampoline_rva_lst[i]
-        
-        # as i explaind, the orig_call_rva might be + or -, and this is not same!
-        if orig_call_rva < 0:
-            tramp_call = -1 * (abs(orig_call_rva) + to_trampoline_call_rva + all_trampoline_size)
-        elif orig_call_rva > 0:
-            tramp_call = -1 * (to_trampoline_call_rva - orig_call_rva + all_trampoline_size)
-        else:
-            print("problem")
-            break
-        
-        # add to list
-        tramp_call_rva_lst.append(tramp_call)
-        
-        
-        
-        
-        print(orig_call_rva, to_trampoline_call_rva)
     
 
 def add_section_2(pe_path, section_data, section_name):
@@ -499,14 +320,12 @@ def main():
     # add section - encrypted pe file
     add_section(loader_path, exe_from_client_path)
     
-    # create the assembly and make from this bytes
+    # create the assembly and make from this bytes of opcodes
     assembly_code = create_assembly_code(calls_number)
     assembly_bytes = assembler(assembly_code)
     
     # jump table: absolute addresses of functions
     address_to_jump_from_trampoline_bytes = address_to_call_from_table_correct(inst_lst, inst_rva_lst)
-
-    print(address_to_jump_from_trampoline_bytes)
 
     # add the assembly bytes
     add_section_2(loader_path_2, assembly_bytes, '.trampol')
@@ -515,17 +334,48 @@ def main():
     add_section_2(loader_path_2, address_to_jump_from_trampoline_bytes, '.address')
     
 
+if __name__ == "__main__":
+    main()
 
-# path = "C:\\Users\\Itay H\\source\\repos\\PACKER\\PACKER\\check_exe.exe"
-# calls_number, change_places, inst_lst, inst_rva_lst = create_patch_dict(path)
 
+"""
+part from table as example:
+    
+    ; entery 1307
+    push eax
+    push ecx
+    push edx
+    mov eax, 1307
+    jmp _end_of_calls_number
+    
+    ; entery 1308
+    push eax
+    push ecx
+    push edx
+    mov eax, 1308
+    jmp _end_of_calls_number
 
-# tramp_jmp_absolute_addresses_lst = address_to_call_from_table_correct(inst_lst, inst_rva_lst)
-# print(bytes(tramp_jmp_absolute_addresses_lst))
-
-main()
-
-# tramp_code, bytes_to_write = create_assembly_code(calls_number, tramp_jmp_absolute_addresses_lst)
-# print(tramp_code)
-
+    ; entery 1309
+    push eax
+    push ecx
+    push edx
+    mov eax, 1309
+    jmp _end_of_calls_number
+    
+    
+    ; 'main' of trampoline
+    _end_of_calls_number:
+        call _find_eip_lable 
+        
+    _find_eip_lable:
+        pop ecx
+        mov edx, eax
+        mov eax, [ecx + edx*4 + 13]
+        
+        pop edx
+        pop ecx
+        xchg eax, [esp]
+        
+        ret 
+"""
 
